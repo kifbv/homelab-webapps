@@ -1,0 +1,475 @@
+{
+  "name": "New Webapp Creation",
+  "nodes": [
+    {
+      "parameters": {
+        "public": false,
+        "options": {
+          "title": "Create New Webapp",
+          "subtitle": "Describe the webapp you want to build",
+          "inputPlaceholder": "I want to build a kanban board application..."
+        }
+      },
+      "id": "chat-trigger",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract user request and prepare for ChatGPT\nconst userMessage = $input.first().json.chatInput;\n\nreturn {\n  json: {\n    userRequest: userMessage,\n    timestamp: new Date().toISOString(),\n    workspacePath: '/home/node/.n8n/repos',\n    webappName: '', // Will be determined by ChatGPT\n    chatgptPrompt: `You are an expert software architect. A user wants to build a webapp with this description:\n\n\"${userMessage}\"\n\nYour task:\n1. Design the application architecture\n2. Choose appropriate technology stack (must be suitable for Docker on ARM64)\n3. Define the folder structure\n4. List required npm packages\n5. Specify the port (default: 3000)\n6. Suggest a short kebab-case name for the app\n\nConstraints:\n- Must run in Docker on ARM64 (Raspberry Pi 5)\n- Must be a Node.js application\n- Must include /health and /ready endpoints\n- Keep it simple and production-ready\n\nReturn your response as JSON with this structure:\n{\n  \"appName\": \"my-app-name\",\n  \"description\": \"Brief description\",\n  \"port\": 3000,\n  \"architecture\": {\n    \"backend\": \"Express.js\",\n    \"database\": \"none or sqlite/postgres\",\n    \"frontend\": \"React/Vue/none\"\n  },\n  \"dependencies\": [\"express\", \"...other packages\"],\n  \"folderStructure\": [\n    \"src/\",\n    \"src/routes/\",\n    \"src/models/\"\n  ],\n  \"endpoints\": [\n    {\n      \"path\": \"/\",\n      \"method\": \"GET\",\n      \"description\": \"Home page\"\n    }\n  ]\n}`\n  }\n};"
+      },
+      "id": "prepare-chatgpt-prompt",
+      "name": "Prepare ChatGPT Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "response",
+        "modelId": {
+          "mode": "list",
+          "value": "gpt-4o"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.chatgptPrompt }}"
+            },
+            {
+              "role": "system",
+              "content": "You are a software architect. Return valid JSON only, no markdown, no explanations."
+            }
+          ]
+        },
+        "options": {
+          "responseFormat": "json_object"
+        }
+      },
+      "id": "chatgpt-design",
+      "name": "ChatGPT Architecture Design",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "1",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "clone",
+        "sourceRepository": "git@github.com-webapps:kifbv/homelab-webapps.git",
+        "repositoryPath": "/home/node/.n8n/repos/homelab-webapps",
+        "authentication": "none"
+      },
+      "id": "clone-webapps-repo",
+      "name": "Clone homelab-webapps Repo",
+      "type": "n8n-nodes-base.git",
+      "typeVersion": 1,
+      "position": [650, 500]
+    },
+    {
+      "parameters": {
+        "operation": "clone",
+        "sourceRepository": "git@github.com-homelab:kifbv/homelab.git",
+        "repositoryPath": "/home/node/.n8n/repos/homelab",
+        "authentication": "none"
+      },
+      "id": "clone-homelab-repo",
+      "name": "Clone homelab Repo",
+      "type": "n8n-nodes-base.git",
+      "typeVersion": 1,
+      "position": [650, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse ChatGPT response and prepare Claude prompt\nconst chatgptResponse = $('ChatGPT Architecture Design').first().json;\nconst architecture = JSON.parse(chatgptResponse.message.content);\n\nconst claudePrompt = `You are an expert Node.js developer. Generate production-ready code for this application:\n\nAPP NAME: ${architecture.appName}\nDESCRIPTION: ${architecture.description}\nPORT: ${architecture.port}\nARCHITECTURE: ${JSON.stringify(architecture.architecture, null, 2)}\nDEPENDENCIES: ${architecture.dependencies.join(', ')}\nFOLDER STRUCTURE: ${architecture.folderStructure.join(', ')}\nENDPOINTS: ${JSON.stringify(architecture.endpoints, null, 2)}\n\nGenerate:\n1. **Dockerfile** - Multi-stage build for ARM64, Node.js 20-alpine base\n2. **package.json** - With all dependencies\n3. **src/index.js** - Main Express server with:\n   - All defined endpoints\n   - /health endpoint returning {\"status\": \"healthy\"}\n   - /ready endpoint returning {\"status\": \"ready\"}\n   - Graceful shutdown on SIGTERM\n   - Error handling\n   - Logging\n4. Additional source files as needed for the folder structure\n\nIMPORTANT:\n- Return code as JSON with structure: {\"files\": [{\"path\": \"Dockerfile\", \"content\": \"...\"}]}\n- Use Docker best practices (multi-stage builds, non-root user, health checks)\n- Include proper error handling and logging\n- Make it production-ready\n- Return ONLY valid JSON, no markdown\n`;\n\nreturn {\n  json: {\n    architecture,\n    claudePrompt,\n    webappName: architecture.appName\n  }\n};"
+      },
+      "id": "prepare-claude-prompt",
+      "name": "Prepare Claude Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "response",
+        "modelId": {
+          "mode": "list",
+          "value": "claude-3-5-sonnet-20241022"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.claudePrompt }}"
+            },
+            {
+              "role": "system",
+              "content": "You are an expert Node.js developer. Return valid JSON only with the exact structure requested."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "claude-code-gen",
+      "name": "Claude Code Generation",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1,
+      "position": [1050, 300],
+      "credentials": {
+        "anthropicApi": {
+          "id": "2",
+          "name": "Anthropic Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Write files to disk\nconst claudeResponse = $('Claude Code Generation').first().json;\nconst webappName = $('Prepare Claude Prompt').first().json.webappName;\nconst files = JSON.parse(claudeResponse.message.content).files;\n\nconst fs = require('fs').promises;\nconst path = require('path');\n\nconst appPath = `/home/node/.n8n/repos/homelab-webapps/${webappName}`;\n\n// Create directory\nawait fs.mkdir(appPath, { recursive: true });\n\n// Write each file\nfor (const file of files) {\n  const filePath = path.join(appPath, file.path);\n  const dirPath = path.dirname(filePath);\n  \n  // Create subdirectories if needed\n  await fs.mkdir(dirPath, { recursive: true });\n  \n  // Write file\n  await fs.writeFile(filePath, file.content, 'utf8');\n}\n\nreturn {\n  json: {\n    webappName,\n    appPath,\n    filesCreated: files.map(f => f.path),\n    success: true\n  }\n};"
+      },
+      "id": "write-files",
+      "name": "Write Files to Disk",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "command": "cd /home/node/.n8n/repos/homelab-webapps/={{ $json.webappName }} && npm install"
+      },
+      "id": "npm-install",
+      "name": "npm install",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "add",
+        "repositoryPath": "/home/node/.n8n/repos/homelab-webapps",
+        "pathsToAdd": "={{ $('Write Files to Disk').first().json.webappName }}"
+      },
+      "id": "git-add",
+      "name": "Git Add",
+      "type": "n8n-nodes-base.git",
+      "typeVersion": 1,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "commit",
+        "repositoryPath": "/home/node/.n8n/repos/homelab-webapps",
+        "message": "feat(={{ $('Write Files to Disk').first().json.webappName }}): initial commit\n\nGenerated by n8n automation\n- Add Dockerfile\n- Add package.json\n- Add source code\n\n🤖 Generated with n8n automation"
+      },
+      "id": "git-commit",
+      "name": "Git Commit",
+      "type": "n8n-nodes-base.git",
+      "typeVersion": 1,
+      "position": [1850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "push",
+        "repositoryPath": "/home/node/.n8n/repos/homelab-webapps",
+        "authentication": "none"
+      },
+      "id": "git-push-webapps",
+      "name": "Git Push webapps",
+      "type": "n8n-nodes-base.git",
+      "typeVersion": 1,
+      "position": [2050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Read BuildKit Job template and substitute values\nconst fs = require('fs').promises;\nconst webappName = $('Write Files to Disk').first().json.webappName;\nconst timestamp = Date.now();\nconst jobName = `build-${webappName}-${timestamp}`;\nconst imageTag = `registry.k8s-lab.dev/webapp/${webappName}:v1.0.0`;\n\n// Read template (this path would be mounted or included in n8n)\nconst templateYaml = await fs.readFile('/home/node/.n8n/repos/homelab/kubernetes/rpi-cluster/infrastructure/build-system/buildkit-job-template.yaml', 'utf8');\n\n// Substitute placeholders\nconst jobYaml = templateYaml\n  .replace(/\\${JOB_NAME}/g, jobName)\n  .replace(/\\${WEBAPP_NAME}/g, webappName)\n  .replace(/\\${GIT_REPO_URL}/g, 'https://github.com/kifbv/homelab-webapps.git')\n  .replace(/\\${GIT_SUBDIRECTORY}/g, webappName)\n  .replace(/\\${IMAGE_TAG}/g, imageTag);\n\nreturn {\n  json: {\n    jobName,\n    webappName,\n    imageTag,\n    jobYaml\n  }\n};"
+      },
+      "id": "generate-buildkit-job",
+      "name": "Generate BuildKit Job",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Read Kubernetes ServiceAccount token for API authentication\nconst fs = require('fs').promises;\nconst token = await fs.readFile('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8');\n\nreturn {\n  json: {\n    token,\n    apiServer: 'https://kubernetes.default.svc.cluster.local'\n  }\n};"
+      },
+      "id": "get-k8s-token",
+      "name": "Get K8s Token",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 450]
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Get K8s Token').first().json.apiServer }}/apis/batch/v1/namespaces/build-system/jobs",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get K8s Token').first().json.token }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/yaml"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "body": "={{ $('Generate BuildKit Job').first().json.jobYaml }}",
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "create-buildkit-job",
+      "name": "Create BuildKit Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2450, 300]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "wait-5sec",
+      "name": "Wait 5 seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2650, 300],
+      "webhookId": "wait-webhook"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Get K8s Token').first().json.apiServer }}/apis/batch/v1/namespaces/build-system/jobs/={{ $('Generate BuildKit Job').first().json.jobName }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get K8s Token').first().json.token }}"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "check-job-status",
+      "name": "Check Job Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.status.succeeded === 1 }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "job-complete",
+      "name": "Job Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Job is still running, loop back to wait\nreturn $input.all();"
+      },
+      "id": "loop-back",
+      "name": "Loop Back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3250, 450]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=Build complete! Generating Kubernetes manifests..."
+      },
+      "id": "respond-build-complete",
+      "name": "Respond Build Complete",
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [3250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate Kubernetes manifests\nconst webappName = $('Write Files to Disk').first().json.webappName;\nconst architecture = $('Prepare Claude Prompt').first().json.architecture;\nconst port = architecture.port;\nconst imageTag = $('Generate BuildKit Job').first().json.imageTag;\n\nconst manifests = {\n  namespace: `apiVersion: v1\nkind: Namespace\nmetadata:\n  name: ${webappName}\n  labels:\n    app.kubernetes.io/name: ${webappName}`,\n\n  deployment: `apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: ${webappName}\n  namespace: ${webappName}\nspec:\n  replicas: 2\n  selector:\n    matchLabels:\n      app: ${webappName}\n  template:\n    metadata:\n      labels:\n        app: ${webappName}\n    spec:\n      containers:\n      - name: ${webappName}\n        image: ${imageTag} # {\"$imagepolicy\": \"${webappName}:${webappName}\"}\n        ports:\n        - containerPort: ${port}\n          name: http\n        livenessProbe:\n          httpGet:\n            path: /health\n            port: ${port}\n          initialDelaySeconds: 10\n          periodSeconds: 10\n        readinessProbe:\n          httpGet:\n            path: /ready\n            port: ${port}\n          initialDelaySeconds: 5\n          periodSeconds: 5\n        resources:\n          requests:\n            cpu: 50m\n            memory: 128Mi\n          limits:\n            cpu: 200m\n            memory: 256Mi`,\n\n  service: `apiVersion: v1\nkind: Service\nmetadata:\n  name: ${webappName}\n  namespace: ${webappName}\nspec:\n  selector:\n    app: ${webappName}\n  ports:\n  - port: 80\n    targetPort: ${port}\n    name: http`,\n\n  httproute: `apiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nmetadata:\n  name: ${webappName}\n  namespace: ${webappName}\nspec:\n  parentRefs:\n  - name: internal-gateway\n    namespace: gateway\n  hostnames:\n  - \"${webappName}.k8s-lab.dev\"\n  rules:\n  - backendRefs:\n    - name: ${webappName}\n      port: 80`,\n\n  imageRepository: `apiVersion: image.toolkit.fluxcd.io/v1beta2\nkind: ImageRepository\nmetadata:\n  name: ${webappName}\n  namespace: ${webappName}\nspec:\n  image: registry.k8s-lab.dev/webapp/${webappName}\n  interval: 1m`,\n\n  imagePolicy: `apiVersion: image.toolkit.fluxcd.io/v1beta2\nkind: ImagePolicy\nmetadata:\n  name: ${webappName}\n  namespace: ${webappName}\nspec:\n  imageRepositoryRef:\n    name: ${webappName}\n  policy:\n    semver:\n      range: '>=1.0.0'`,\n\n  kustomization: `apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - namespace.yaml\n  - deployment.yaml\n  - service.yaml\n  - httproute.yaml\n  - imagerepository.yaml\n  - imagepolicy.yaml`,\n\n  fluxKs: `apiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: ${webappName}\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./kubernetes/rpi-cluster/apps/${webappName}/app\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: homelab\n  targetNamespace: ${webappName}`\n};\n\nreturn {\n  json: {\n    webappName,\n    manifests,\n    manifestsPath: `/home/node/.n8n/repos/homelab/kubernetes/rpi-cluster/apps/${webappName}`\n  }\n};"
+      },
+      "id": "generate-manifests",
+      "name": "Generate K8s Manifests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Write manifests to disk\nconst fs = require('fs').promises;\nconst path = require('path');\nconst { webappName, manifests, manifestsPath } = $json;\n\nconst appPath = path.join(manifestsPath, 'app');\n\n// Create directories\nawait fs.mkdir(appPath, { recursive: true });\n\n// Write manifests\nawait fs.writeFile(path.join(appPath, 'namespace.yaml'), manifests.namespace, 'utf8');\nawait fs.writeFile(path.join(appPath, 'deployment.yaml'), manifests.deployment, 'utf8');\nawait fs.writeFile(path.join(appPath, 'service.yaml'), manifests.service, 'utf8');\nawait fs.writeFile(path.join(appPath, 'httproute.yaml'), manifests.httproute, 'utf8');\nawait fs.writeFile(path.join(appPath, 'imagerepository.yaml'), manifests.imageRepository, 'utf8');\nawait fs.writeFile(path.join(appPath, 'imagepolicy.yaml'), manifests.imagePolicy, 'utf8');\nawait fs.writeFile(path.join(appPath, 'kustomization.yaml'), manifests.kustomization, 'utf8');\nawait fs.writeFile(path.join(manifestsPath, 'ks.yaml'), manifests.fluxKs, 'utf8');\n\nreturn {\n  json: {\n    webappName,\n    manifestsPath,\n    success: true\n  }\n};"
+      },
+      "id": "write-manifests",
+      "name": "Write Manifests",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "add",
+        "repositoryPath": "/home/node/.n8n/repos/homelab",
+        "pathsToAdd": "kubernetes/rpi-cluster/apps/={{ $json.webappName }}"
+      },
+      "id": "git-add-manifests",
+      "name": "Git Add Manifests",
+      "type": "n8n-nodes-base.git",
+      "typeVersion": 1,
+      "position": [3850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "commit",
+        "repositoryPath": "/home/node/.n8n/repos/homelab",
+        "message": "feat(={{ $('Write Manifests').first().json.webappName }}): deploy webapp\n\nGenerated by n8n automation\n- Add Kubernetes manifests\n- Configure HTTPRoute\n- Initial version: v1.0.0\n\n🤖 Generated with n8n automation"
+      },
+      "id": "git-commit-manifests",
+      "name": "Git Commit Manifests",
+      "type": "n8n-nodes-base.git",
+      "typeVersion": 1,
+      "position": [4050, 300]
+    },
+    {
+      "parameters": {
+        "operation": "push",
+        "repositoryPath": "/home/node/.n8n/repos/homelab",
+        "authentication": "none"
+      },
+      "id": "git-push-homelab",
+      "name": "Git Push homelab",
+      "type": "n8n-nodes-base.git",
+      "typeVersion": 1,
+      "position": [4250, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=✅ Your webapp '{{ $('Write Manifests').first().json.webappName }}' is deploying!\n\n🌐 URL: https://{{ $('Write Manifests').first().json.webappName }}.k8s-lab.dev\n\n⏱️ It should be ready in 2-3 minutes once Flux reconciles.\n\nYou can check status with:\nkubectl -n {{ $('Write Manifests').first().json.webappName }} get pods"
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1,
+      "position": [4450, 300]
+    }
+  ],
+  "connections": {
+    "Chat Trigger": {
+      "main": [[{"node": "Prepare ChatGPT Prompt", "type": "main", "index": 0}]]
+    },
+    "Prepare ChatGPT Prompt": {
+      "main": [
+        [
+          {"node": "ChatGPT Architecture Design", "type": "main", "index": 0},
+          {"node": "Clone homelab-webapps Repo", "type": "main", "index": 0},
+          {"node": "Clone homelab Repo", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "ChatGPT Architecture Design": {
+      "main": [[{"node": "Prepare Claude Prompt", "type": "main", "index": 0}]]
+    },
+    "Prepare Claude Prompt": {
+      "main": [[{"node": "Claude Code Generation", "type": "main", "index": 0}]]
+    },
+    "Claude Code Generation": {
+      "main": [[{"node": "Write Files to Disk", "type": "main", "index": 0}]]
+    },
+    "Write Files to Disk": {
+      "main": [[{"node": "npm install", "type": "main", "index": 0}]]
+    },
+    "npm install": {
+      "main": [[{"node": "Git Add", "type": "main", "index": 0}]]
+    },
+    "Git Add": {
+      "main": [[{"node": "Git Commit", "type": "main", "index": 0}]]
+    },
+    "Git Commit": {
+      "main": [[{"node": "Git Push webapps", "type": "main", "index": 0}]]
+    },
+    "Git Push webapps": {
+      "main": [
+        [
+          {"node": "Generate BuildKit Job", "type": "main", "index": 0},
+          {"node": "Get K8s Token", "type": "main", "index": 0}
+        ]
+      ]
+    },
+    "Generate BuildKit Job": {
+      "main": [[{"node": "Create BuildKit Job", "type": "main", "index": 0}]]
+    },
+    "Create BuildKit Job": {
+      "main": [[{"node": "Wait 5 seconds", "type": "main", "index": 0}]]
+    },
+    "Wait 5 seconds": {
+      "main": [[{"node": "Check Job Status", "type": "main", "index": 0}]]
+    },
+    "Check Job Status": {
+      "main": [[{"node": "Job Complete?", "type": "main", "index": 0}]]
+    },
+    "Job Complete?": {
+      "main": [
+        [{"node": "Respond Build Complete", "type": "main", "index": 0}],
+        [{"node": "Loop Back", "type": "main", "index": 0}]
+      ]
+    },
+    "Loop Back": {
+      "main": [[{"node": "Wait 5 seconds", "type": "main", "index": 0}]]
+    },
+    "Respond Build Complete": {
+      "main": [[{"node": "Generate K8s Manifests", "type": "main", "index": 0}]]
+    },
+    "Generate K8s Manifests": {
+      "main": [[{"node": "Write Manifests", "type": "main", "index": 0}]]
+    },
+    "Write Manifests": {
+      "main": [[{"node": "Git Add Manifests", "type": "main", "index": 0}]]
+    },
+    "Git Add Manifests": {
+      "main": [[{"node": "Git Commit Manifests", "type": "main", "index": 0}]]
+    },
+    "Git Commit Manifests": {
+      "main": [[{"node": "Git Push homelab", "type": "main", "index": 0}]]
+    },
+    "Git Push homelab": {
+      "main": [[{"node": "Respond Success", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-19T00:00:00.000Z",
+  "versionId": "1"
+}
